@@ -5,7 +5,14 @@ from libc.math cimport log
 cimport cython.parallel
 
 cdef extern from "yepCore.h":
-    void yepCore_DotProduct_V32fV32f_S32f(float * x, float * y, float * dotProduct, size_t length)
+    void yepCore_DotProduct_V32fV32f_S32f(float * x, float * y, float * dotProduct, size_t length) nogil
+    void yepCore_Add_V32fS32f_V32f(float * x, float y, float * dotProduct, size_t length) nogil
+    void yepCore_Multiply_IV32fS32f_IV32f(float * x, float y, size_t length) nogil
+    void yepCore_Add_IV32fV32f_IV32f(float * x, float * y, size_t length) nogil
+    void yepCore_Add_IV32fS32f_IV32f(float * x, float y, size_t length) nogil
+    void yepLibrary_Init() nogil
+
+yepLibrary_Init()
 
 def tste_grad_cython_log(npX,
                          int N,
@@ -25,7 +32,9 @@ def tste_grad_cython_log(npX,
     cdef float[::1] P = np.zeros(no_triplets, dtype='float32')
     cdef float C = 0
 
+
     C += lamb * np.sum(npX**2)
+
 
     # Compute gradient for each point
     npdC = np.zeros((N, no_dims), 'float32')
@@ -35,26 +44,44 @@ def tste_grad_cython_log(npX,
 
     # Compute student-T kernel for each point
     # i,j range over points; k ranges over dims
-    for i in xrange(N):
-        yepCore_DotProduct_V32fV32f_S32f(&X[i,0], &X[i,0], &sum_X[i], no_dims)
-        # for k in xrange(no_dims):
-        #     sum_X[i] += X[i,k]*X[i,k]
     with nogil:
+        for i in xrange(N):
+            yepCore_DotProduct_V32fV32f_S32f(&X[i,0], &X[i,0], &sum_X[i], no_dims)
+            # for k in xrange(no_dims):
+            #     sum_X[i] += X[i,k]*X[i,k]
         for i in cython.parallel.prange(N):
+            # pretty sure the following works:
+            # for j in xrange(N):
+            #     K[i,j] = sum_X[i] + sum_X[j]
+            #     for k in xrange(no_dims):
+            #         K[i,j] += -2 * X[i,k]*X[j,k]
+            #     K[i,j] = (1 + K[i,j] / alpha) ** ((alpha+1)/-2)
+
+            # now let's try that:
             for j in xrange(N):
-                K[i,j] = sum_X[i] + sum_X[j]
-                for k in xrange(no_dims):
-                    K[i,j] += -2 * X[i,k]*X[j,k]
-                K[i,j] = (1 + K[i,j] / alpha) ** ((alpha+1)/-2)
+                yepCore_DotProduct_V32fV32f_S32f(&X[i,0], &X[j,0], &K[i,j], no_dims)
+            yepCore_Multiply_IV32fS32f_IV32f(&K[i,0], -2, N)
+            # for j in xrange(N):
+            #     for k in xrange(no_dims):
+            #         K[i,j] += -2 * X[i,k]*X[j,k]
+
+            # for j in xrange(N):
+            #     K[i,j] += sum_X[i] + sum_X[j]
+            yepCore_Add_IV32fS32f_IV32f(&K[i,0], sum_X[i], N)
+            yepCore_Add_IV32fV32f_IV32f(&K[i,0], &sum_X[0], N)
+
+            # for j in xrange(N):
+            #     K[i,j] = (1 + K[i,j] / alpha) ** ((alpha+1)/-2)
+            yepCore_Add_IV32fS32f_IV32f(&K[i,0], 1, N)
+            yepCore_Multiply_IV32fS32f_IV32f(&K[i,0], (1.0/alpha), N)
+            for j in xrange(N):
+                K[i,j] = K[i,j] ** ((alpha+1)/-2)
 
         for t in cython.parallel.prange(no_triplets):
             P[t] = K[triplets_A[t], triplets_B[t]] / (
                 K[triplets_A[t],triplets_B[t]] +
                 K[triplets_A[t],triplets_C[t]])
             C += -(log(P[t]))
-
-    # with nogil:
-    #     for t in cython.parallel.prange(no_triplets):
 
             for i in xrange(no_dims):
                 # For i = each dimension to use

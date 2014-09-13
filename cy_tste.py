@@ -56,7 +56,7 @@ def tste(triplets, no_dims=2, lamb=0, alpha=None, use_log=True,verbose=True, max
 
     # Initialize some variables
     if initial_X is None:
-        X = np.random.randn(N, no_dims).astype('float32') * 0.0001
+        X = np.random.randn(N, no_dims) * 0.0001
     else:
         X = initial_X
 

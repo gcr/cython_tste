@@ -32,6 +32,7 @@ cimport numpy as cnp
 import numpy as np
 from libc.math cimport log
 cimport cython.parallel
+cimport openmp
 
 cpdef tste_grad(npX,
                int N,
@@ -103,6 +104,13 @@ def tste(triplets, no_dims=2, lamb=0, alpha=None, verbose=True, max_iter=1000, s
     coordinate of the point.
 
     """
+
+
+    num_threads = openmp.omp_get_num_procs()
+
+    openmp.omp_set_num_threads(num_threads)
+    print "Using {} threads".format(openmp.omp_get_num_threads())
+
     if alpha is None:
         alpha = no_dims-1
 

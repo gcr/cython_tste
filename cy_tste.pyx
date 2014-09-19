@@ -33,17 +33,17 @@ import numpy as np
 from libc.math cimport log
 cimport cython.parallel
 
-cdef tste_grad(npX,
-                         int N,
-                         int no_dims,
-                         int [:, ::1] triplets,
-                         double lamb,
-                         double alpha):
+cpdef tste_grad(npX,
+               int N,
+               int no_dims,
+               long [:, ::1] triplets,
+               double lamb,
+               double alpha):
     """ Compute the cost function and gradient update of t-STE """
-    cdef int[:] triplets_A = triplets[:,0]
-    cdef int[:] triplets_B = triplets[:,1]
-    cdef int[:] triplets_C = triplets[:,2]
-    cdef unsigned int i,t,j,k
+    cdef long[:] triplets_A = triplets[:,0]
+    cdef long[:] triplets_B = triplets[:,1]
+    cdef long[:] triplets_C = triplets[:,2]
+    cdef int i,t,j,k
     cdef double[:, ::1] X = npX
     cdef double[::1] sum_X = np.zeros((N,), dtype='float64')
     cdef double[:, ::1] K = np.zeros((N, N), dtype='float64')

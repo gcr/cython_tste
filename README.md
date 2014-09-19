@@ -14,6 +14,11 @@ Requirements
 
 Earlier versions may work OK.
 
+See also
+========
+- tSTE Theano (slower than this version): https://github.com/gcr/tste-theano
+- L.J.P. van der Maaten's original Matlab implementation: http://homepage.tudelft.nl/19j49/ste/Stochastic_Triplet_Embedding.html
+
 License
 =======
 

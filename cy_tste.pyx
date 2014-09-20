@@ -96,7 +96,17 @@ cpdef tste_grad(npX,
     npdC = (npdC*-1) + 2*lamb*npX
     return C, npdC
 
-def tste(triplets, no_dims=2, lamb=0, alpha=None, verbose=True, max_iter=1000, save_each_iteration=False, initial_X=None,static_points=np.array([]), ignore_zeroindexed_error=True):
+def tste(triplets,
+         no_dims=2,
+         lamb=0,
+         alpha=None,
+         verbose=True,
+         max_iter=1000,
+         save_each_iteration=False,
+         initial_X=None,
+         static_points=np.array([]),
+         ignore_zeroindexed_error=True,
+         num_threads=None):
     """Learn the triplet embedding for the given triplets.
 
     Returns an array with shape (max(triplets)+1, no_dims). The i-th
@@ -104,12 +114,9 @@ def tste(triplets, no_dims=2, lamb=0, alpha=None, verbose=True, max_iter=1000, s
     coordinate of the point.
 
     """
-
-
-    num_threads = openmp.omp_get_num_procs()
-
+    if num_threads is None:
+        num_threads = openmp.omp_get_num_procs()
     openmp.omp_set_num_threads(num_threads)
-    print "Using {} threads".format(openmp.omp_get_num_threads())
 
     if alpha is None:
         alpha = no_dims-1

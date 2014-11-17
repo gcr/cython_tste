@@ -72,15 +72,23 @@ cpdef tste_grad(npX,
                 for k in xrange(no_dims):
                     K[i,j] += -2 * X[i,k]*X[j,k]
                 K[i,j] = (1 + K[i,j] / alpha) ** ((alpha+1)/-2)
+                # Now, K[i,j] = ((sqdist(i,j)/alpha + 1)) ** (-0.5*(alpha+1)),
+                # which is exactly the numerator of p_{i,j} in the lower right of
+                # t-STE paper page 3.
+                # The proof follows because sqdist(a,b) = (a-b)(a-b) = a^2+b^2-2ab
 
         for t in cython.parallel.prange(no_triplets):
             P[t] = K[triplets_A[t], triplets_B[t]] / (
                 K[triplets_A[t],triplets_B[t]] +
                 K[triplets_A[t],triplets_C[t]])
+            # This is exactly p_{ijk}, which is the equation in the lower-right
+            # of page 3 of the t-STE paper.
             C += -(log(P[t]))
+            # This is exactly the cost.
 
             for i in xrange(no_dims):
                 # For i = each dimension to use
+                # Calculate the gradient of *this triplet* on its points.
                 const = (alpha+1) / alpha
                 A_to_B = ((1 - P[t]) *
                           K[triplets_A[t],triplets_B[t]] *

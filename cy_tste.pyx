@@ -35,12 +35,14 @@ cimport cython.parallel
 cimport openmp
 
 cpdef tste_grad(npX,
-               int N,
-               int no_dims,
-               long [:, ::1] triplets,
-               double lamb,
-               double alpha):
+                int N,
+                int no_dims,
+                long [:, ::1] triplets,
+                double lamb,
+                double alpha,
+                int use_log):
     """ Compute the cost function and gradient update of t-STE """
+
     cdef long[:] triplets_A = triplets[:,0]
     cdef long[:] triplets_B = triplets[:,1]
     cdef long[:] triplets_C = triplets[:,2]
@@ -48,6 +50,7 @@ cpdef tste_grad(npX,
     cdef double[:, ::1] X = npX
     cdef double[::1] sum_X = np.zeros((N,), dtype='float64')
     cdef double[:, ::1] K = np.zeros((N, N), dtype='float64')
+    cdef double[:, ::1] Q = np.zeros((N, N), dtype='float64')
     cdef unsigned int no_triplets = len(triplets)
     cdef double[::1] P = np.zeros(no_triplets, dtype='float64')
     cdef double C = 0
@@ -58,7 +61,7 @@ cpdef tste_grad(npX,
     npdC = np.zeros((N, no_dims), 'float64')
 
     cdef double[:, ::1] dC = npdC
-    cdef double A_to_B, B_to_C, const
+    cdef double A_to_B, A_to_C, const
 
     # Compute student-T kernel for each point
     # i,j range over points; k ranges over dims
@@ -71,6 +74,7 @@ cpdef tste_grad(npX,
                 K[i,j] = sum_X[i] + sum_X[j]
                 for k in xrange(no_dims):
                     K[i,j] += -2 * X[i,k]*X[j,k]
+                Q[i,j] = (1 + K[i,j] / alpha) ** -1
                 K[i,j] = (1 + K[i,j] / alpha) ** ((alpha+1)/-2)
                 # Now, K[i,j] = ((sqdist(i,j)/alpha + 1)) ** (-0.5*(alpha+1)),
                 # which is exactly the numerator of p_{i,j} in the lower right of
@@ -83,7 +87,7 @@ cpdef tste_grad(npX,
                 K[triplets_A[t],triplets_C[t]])
             # This is exactly p_{ijk}, which is the equation in the lower-right
             # of page 3 of the t-STE paper.
-            C += -(log(P[t]))
+            C += -log(P[t]) if use_log else -P[t]
             # This is exactly the cost.
 
             for i in xrange(no_dims):
@@ -91,16 +95,24 @@ cpdef tste_grad(npX,
                 # Calculate the gradient of *this triplet* on its points.
                 const = (alpha+1) / alpha
                 A_to_B = ((1 - P[t]) *
-                          K[triplets_A[t],triplets_B[t]] *
+                          #K[triplets_A[t],triplets_B[t]] *
+                          Q[triplets_A[t],triplets_B[t]] *
                           (X[triplets_A[t], i] - X[triplets_B[t], i]))
-                B_to_C = ((1 - P[t]) *
-                          K[triplets_A[t],triplets_C[t]] *
+                A_to_C = ((1 - P[t]) *
+                          #(K[triplets_A[t],triplets_C[t]]) *
+                          Q[triplets_A[t],triplets_C[t]] *
                           (X[triplets_A[t], i] - X[triplets_C[t], i]))
 
-                dC[triplets_A[t], i] += -const * (A_to_B - B_to_C)
-                dC[triplets_B[t], i] += -const * (-A_to_B)
-                dC[triplets_C[t], i] += -const * (B_to_C)
+                if use_log:
+                    dC[triplets_A[t], i] += -const * (A_to_B - A_to_C)
+                    dC[triplets_B[t], i] += -const * (-A_to_B)
+                    dC[triplets_C[t], i] += -const * (A_to_C)
+                else:
+                    dC[triplets_A[t], i] += -const * P[t] * (A_to_B - A_to_C)
+                    dC[triplets_B[t], i] += -const * P[t] * (-A_to_B)
+                    dC[triplets_C[t], i] += -const * P[t] * (A_to_C)
 
+    # The 2*lamb*npx is for regularization: derivative of L2 norm
     npdC = (npdC*-1) + 2*lamb*npX
     return C, npdC
 
@@ -114,7 +126,9 @@ def tste(triplets,
          initial_X=None,
          static_points=np.array([]),
          ignore_zeroindexed_error=True,
-         num_threads=None):
+         num_threads=None,
+         use_log=False,
+):
     """Learn the triplet embedding for the given triplets.
 
     Returns an array with shape (max(triplets)+1, no_dims). The i-th
@@ -160,7 +174,7 @@ def tste(triplets,
     while iter < max_iter and no_incr < 5:
         old_C = C
         # Calculate gradient descent and cost
-        C,G = tste_grad(X, N, no_dims, triplets, lamb, alpha)
+        C,G = tste_grad(X, N, no_dims, triplets, lamb, alpha, use_log)
 
         if C < best_C:
             best_C = C

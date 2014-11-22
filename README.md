@@ -22,7 +22,9 @@ See also
 License
 =======
 
-Copyright (c) 2014 Michael Wilber
+A re-implementation of tSTE Copyright (c) 2012 by Laurens Van der Maaten
+
+This port copyright (c) 2014 Michael Wilber.
 
 This software is provided 'as-is', without any express or implied
 warranty. In no event will the authors be held liable for any damages

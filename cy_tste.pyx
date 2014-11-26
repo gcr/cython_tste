@@ -47,7 +47,7 @@ cpdef tste_grad(npX,
                 double[:, ::1] K, # = np.zeros((N, N), dtype='float64')
                 double[:, ::1] Q, # = np.zeros((N, N), dtype='float64')
                 double [:, ::1] dC, # = np.zeros((N, no_dims), 'float64')
-                double[:, :, ::1] dCdt, #= np.zeros((no_triplets, no_dims, 3), 'float64')
+                double[:, :, ::1] dC_part, #= np.zeros((no_triplets, no_dims, 3), 'float64')
 
 ):
     """ Compute the cost function and gradient update of t-STE """
@@ -62,9 +62,8 @@ cpdef tste_grad(npX,
     cdef double C = 0
     cdef double A_to_B, A_to_C, const
 
+    # L2 Regularization cost
     C += lamb * np.sum(npX**2)
-
-    # Compute gradient for each point
 
     # Compute student-T kernel for each point
     # i,j range over points; k ranges over dims
@@ -72,6 +71,7 @@ cpdef tste_grad(npX,
         for i in xrange(N):
             sum_X[i] = 0
             for k in xrange(no_dims):
+                # Squared norm
                 sum_X[i] += X[i,k]*X[i,k]
         for i in cython.parallel.prange(N):
             for j in xrange(N):
@@ -85,6 +85,7 @@ cpdef tste_grad(npX,
                 # t-STE paper page 3.
                 # The proof follows because sqdist(a,b) = (a-b)(a-b) = a^2+b^2-2ab
 
+        # Compute probability (or log-prob) for each triplet
         for t in cython.parallel.prange(no_triplets):
             P = K[triplets_A[t], triplets_B[t]] / (
                 K[triplets_A[t],triplets_B[t]] +
@@ -107,24 +108,27 @@ cpdef tste_grad(npX,
                           Q[triplets_A[t],triplets_C[t]] *
                           (X[triplets_A[t], i] - X[triplets_C[t], i]))
 
+                # Problem: Since this is a parallel for loop, we can't
+                # accumulate everything at once. Race conditions.
+                # So I calculate it once here:
                 if use_log:
-                    dCdt[t, i, 0] = -const * (A_to_B - A_to_C)
-                    dCdt[t, i, 1] = -const * (-A_to_B)
-                    dCdt[t, i, 2] = -const * (A_to_C)
+                    dC_part[t, i, 0] = -const * (A_to_B - A_to_C)
+                    dC_part[t, i, 1] = -const * (-A_to_B)
+                    dC_part[t, i, 2] = -const * (A_to_C)
                 else:
-                    dCdt[t, i, 0] = -const * P * (A_to_B - A_to_C)
-                    dCdt[t, i, 1] = -const * P * (-A_to_B)
-                    dCdt[t, i, 2] = -const * P * (A_to_C)
+                    dC_part[t, i, 0] = -const * P * (A_to_B - A_to_C)
+                    dC_part[t, i, 1] = -const * P * (-A_to_B)
+                    dC_part[t, i, 2] = -const * P * (A_to_C)
 
-        # Collect all the triplets (have to do this singlethreaded)
+        # ...and then accumulate:
         for n in xrange(N):
             for i in xrange(no_dims):
                 dC[n, i] = 0
         for t in xrange(no_triplets):
             for i in xrange(no_dims):
-                dC[triplets_A[t], i] += dCdt[t, i, 0]
-                dC[triplets_B[t], i] += dCdt[t, i, 1]
-                dC[triplets_C[t], i] += dCdt[t, i, 2]
+                dC[triplets_A[t], i] += dC_part[t, i, 0]
+                dC[triplets_B[t], i] += dC_part[t, i, 1]
+                dC[triplets_C[t], i] += dC_part[t, i, 2]
         for n in xrange(N):
             for i in xrange(no_dims):
                 # The 2*lamb*npx is for regularization: derivative of L2 norm
@@ -149,6 +153,31 @@ def tste(triplets,
     Returns an array with shape (max(triplets)+1, no_dims). The i-th
     row in this array corresponds to the no_dims-dimensional
     coordinate of the point.
+
+    Parameters:
+
+    triplets: An Nx3 integer array of object indices. Each row is a
+              triplet; first column is the 'reference', second column
+              is the 'near edge', and third column is the 'far edge'.
+    use_log:  When set, optimize for \sum\log p; when unset, optimize
+              just \sum p. This changes the algorithm results quite a
+              bit, so try both cases and pick which works better. Note
+              that tSTE is a special case of Crowd Kernel Learning by
+              construction when use_log=True, no_dims=2, alpha=1.
+    no_dims:  Number of dimensions in final embedding. High-dimensional
+              embeddings are much easier to satisfy (lower training
+              error), but may capture less information.
+    lamb:     L2 regularization constant. Collapses points closer to origin.
+    alpha:    Degrees of freedom in student T kernel. Default is no_dims-1.
+              Considered "black magic"; roughly, how much of an impact
+              badly satisfying points have on the gradient calculation.
+    verbose:  Prints log messages every 10 iterations
+    save_each_iteration: When true, will save intermediate results to
+              a list so you can watch it converge.
+    initial_X: The initial set of points to use. Normally distributed if unset.
+    static_points: List of static points that will have their gradient zeroed.
+    ignore_zeroindexed_error: For the MATLAB-weary
+    num_threads: Parallelism.
 
     """
     if num_threads is None:
@@ -184,11 +213,12 @@ def tste(triplets,
     iteration_Xs = []       # for debugging ;) *shhhh*
     G = np.zeros((N, no_dims), 'float64')
 
-    # Avoid allocation :D
+    # Avoid allocation at readability cost. Bah. I don't like it but
+    # it *does* avoid MemoryErrors on my machine, so a net win I guess.
     _sum_X = np.zeros((N,), dtype='float64')
     _K = np.zeros((N, N), dtype='float64')
     _Q = np.zeros((N, N), dtype='float64')
-    _dCdt= np.zeros((len(triplets), no_dims, 3), 'float64')
+    _dC_part= np.zeros((len(triplets), no_dims, 3), 'float64')
 
     # Perform main iterations
     iter = 0; no_incr = 0;
@@ -196,7 +226,7 @@ def tste(triplets,
         old_C = C
         # Calculate gradient descent and cost
         C = tste_grad(X, N, no_dims, triplets, lamb, alpha, use_log,
-                        _sum_X, _K, _Q, G, _dCdt
+                        _sum_X, _K, _Q, G, _dC_part
         )
 
         if C < best_C:

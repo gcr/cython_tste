@@ -229,6 +229,10 @@ def tste(triplets,
                         _sum_X, _K, _Q, G, _dC_part
         )
 
+        X = X - (float(eta) / n_triplets * N) * G
+        if len(static_points):
+            X[static_points] = initial_X[static_points]
+
         if C < best_C:
             best_C = C
             best_X = X
@@ -236,10 +240,6 @@ def tste(triplets,
         # Perform gradient update
         if save_each_iteration:
             iteration_Xs.append(X.copy())
-
-        X = X - (float(eta) / n_triplets * N) * G
-        if len(static_points):
-            X[static_points] = initial_X[static_points]
 
         # Update learning rate
         if old_C > C + tol:
